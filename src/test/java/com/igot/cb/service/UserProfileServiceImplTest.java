@@ -1,5 +1,6 @@
 package com.igot.cb.service;
 
+import static org.junit.Assert.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,6 +11,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -220,5 +222,138 @@ class UserProfileServiceImplTest {
         assertEquals(capturedIdMap.get("ACTIVE"), result.get("profilestatus"));
         assertEquals(capturedIdMap.get("teacher"), result.get("designation"));
         assertEquals(capturedIdMap.get("A"), result.get("group"));
+    }
+
+    @Test
+    void testGetUserProfile_UnsupportedProfileDetailsType() {
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(null);
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), isNull()))
+                .thenReturn(List.of(Map.of(
+                        "id", "user123",
+                        "rootOrgId", "org1",
+                        "profileDetails", 123
+                )));
+        assertTrue(userProfileService.getUserProfile(userId).isEmpty());
+    }
+
+    @Test
+    void testGetUserProfile_EmptyUserProfile() {
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(null);
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), isNull()))
+                .thenReturn(List.of(Map.of()));
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetUserProfile_IdMapSizeMismatch() {
+        String cachedJson = """
+                {
+                    "id": "user123",
+                    "rootOrgId": "org1",
+                    "profileDetails": {
+                        "professionalDetails": [{"designation": "teacher"}],
+                        "profileStatus": "ACTIVE"
+                    }
+                }
+                """;
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(cachedJson);
+        when(idMapCacheMgr.getId(anyList())).thenReturn(Map.of("user123", 1));
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetUserProfile_EmptyProfessionalDetails() {
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(null);
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), isNull()))
+                .thenReturn(List.of(Map.of(
+                        "id", "user123",
+                        "rootOrgId", "org1",
+                        "profileDetails", Map.of(
+                                "professionalDetails", List.of(),
+                                "profileStatus", "ACTIVE"
+                        )
+                )));
+        when(idMapCacheMgr.getId(anyList())).thenReturn(Map.of(
+                "user123", 1,
+                "org1", 2,
+                "ACTIVE", 3
+        ));
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertEquals(3, result.size());
+    }
+
+    @Test
+    void testGetUserProfile_UnsupportedProfileDetailsType_Exception() {
+        String cachedJson = """
+                {
+                    "id": "user123",
+                    "rootOrgId": "org1",
+                    "profileDetails": 12345
+                }
+                """;
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(cachedJson);
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetUserProfile_IdMapMissingValue_ShouldReturnEmpty() {
+        String cachedJson = """
+                {
+                    "id": "user123",
+                    "rootOrgId": "org1",
+                    "profileDetails": {
+                        "professionalDetails": [{"designation": "teacher"}],
+                        "profileStatus": "ACTIVE"
+                    }
+                }
+                """;
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(cachedJson);
+        when(idMapCacheMgr.getId(anyList())).thenReturn(Map.of(
+                "user123", 1, "org1", 2, "ACTIVE", 3
+        ));
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertTrue(result.isEmpty());
+    }
+
+
+    @Test
+    void testGetUserProfile_ProfileDetailsAsString() {
+        String profileDetailsJson = "{\"professionalDetails\": [{\"designation\": \"teacher\", \"group\": \"A\"}], \"profileStatus\": \"ACTIVE\"}";
+        String cachedJson = """
+                {
+                    "id": "user123",
+                    "rootOrgId": "org1",
+                    "profileDetails": "%s"
+                }
+                """.formatted(profileDetailsJson.replace("\"", "\\\""));
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(cachedJson);
+        when(idMapCacheMgr.getId(anyList())).thenAnswer(invocation -> {
+            List<String> values = invocation.getArgument(0);
+            Map<String, Integer> map = new HashMap<>();
+            int i = 1;
+            for (String v : values) {
+                map.put(v, i++);
+            }
+            return map;
+        });
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertEquals(5, result.size()); // user, rootorgid, designation, group, profilestatus
+    }
+
+    @Test
+    void testGetUserProfile_UriEncodingApplied() {
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn("""
+                    {
+                      "id": "user123",
+                      "rootOrgId": "org 1",
+                      "profileDetails": {}
+                    }
+                """);
+        when(idMapCacheMgr.getId(anyList())).thenReturn(Map.of("user123", 1, "org%201", 2));
+        Map<String, Integer> result = userProfileService.getUserProfile(userId);
+        assertEquals(2, result.size()); // verifies encoding
     }
 }

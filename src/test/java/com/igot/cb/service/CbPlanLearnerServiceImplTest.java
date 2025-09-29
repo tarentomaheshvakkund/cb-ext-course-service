@@ -375,4 +375,392 @@ class CbPlanLearnerServiceImplTest {
         assertEquals("CustomValue", userProfile.get("customText"));
         assertEquals("Java", userProfile.get("skill"));
     }
+
+    @Test
+    void testGetCBPlanListForUser_ParseContextDataException() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user123");
+        Map<String, Object> userData = createUserData();
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.USER), any(), any(), any()))
+                .thenReturn(List.of(userData));
+        Map<String, Object> plan = new HashMap<>();
+        plan.put(Constants.PLAN_ID, "p1");
+        plan.put(Constants.STATUS, Constants.LIVE);
+        plan.put(Constants.CONTENT_LIST, List.of("c1"));
+        plan.put(Constants.CONTEXT_DATA_REQUEST, "{badJson}");
+        when(cbPlanCacheMgr.getCbPlanForAllAndOrgId("org123"))
+                .thenReturn(List.of(plan));
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertEquals(Constants.SUCCESS, resp.getParams().getStatus());
+    }
+
+    @Test
+    void testGetCBPlanListForUser_CourseWithRc_NoSecureSettings() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user123");
+        Map<String, Object> userData = createUserData();
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.USER), any(), any(), any()))
+                .thenReturn(List.of(userData));
+        Map<String, Object> plan = new HashMap<>();
+        plan.put(Constants.PLAN_ID, "p1");
+        plan.put(Constants.STATUS, Constants.LIVE);
+        plan.put(Constants.CONTENT_LIST, List.of("course_rc"));
+        plan.put(Constants.END_DATE_REQUEST, new Date());
+        when(cbPlanCacheMgr.getCbPlanForAllAndOrgId("org123"))
+                .thenReturn(List.of(plan));
+        Map<String, Object> content = new HashMap<>();
+        content.put(Constants.IDENTIFIER, "course_rc");
+        content.put(Constants.SECURE_SETTINGS, Collections.emptyMap());
+        when(contentService.readContent("course_rc", null)).thenReturn(content);
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertNotNull(resp);
+    }
+
+    @Test
+    void testGetCBPlanListForUser_ContentServiceReturnsNull() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user123");
+        Map<String, Object> userData = createUserData();
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.USER), any(), any(), any()))
+                .thenReturn(List.of(userData));
+        Map<String, Object> plan = new HashMap<>();
+        plan.put(Constants.PLAN_ID, "p1");
+        plan.put(Constants.STATUS, Constants.LIVE);
+        plan.put(Constants.CONTENT_LIST, List.of("cX"));
+        when(cbPlanCacheMgr.getCbPlanForAllAndOrgId("org123"))
+                .thenReturn(List.of(plan));
+        when(contentService.readContent("cX", null)).thenReturn(Collections.emptyMap());
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertNotNull(resp);
+    }
+
+    @Test
+    void testSetUserProfile_RawValueAsMap() throws Exception {
+        Map<String, String> userProfile = new HashMap<>();
+        Map<String, Object> profileMap = new HashMap<>();
+        profileMap.put(Constants.ID, "u1");
+        profileMap.put("rootorgid", "org1");
+        profileMap.put("profiledetails", Map.of(
+                Constants.PROFESSIONAL_DETAILS, List.of(Map.of(Constants.DESIGNATION, "Dev", Constants.GROUP, "Grp")),
+                Constants.PROFILE_STATUS_KEY, "VERIFIED",
+                Constants.CADRE_DETAILS, Map.of(Constants.CADRE_NAME, "Cadre", Constants.CIVIL_SERVICE_NAME, "Service")
+        ));
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("setUserProfile", Map.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, userProfile, profileMap);
+        assertEquals("Dev", userProfile.get(Constants.DESIGNATION));
+        assertEquals("Cadre", userProfile.get(Constants.CADRE));
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_NoAccessControl() throws Exception {
+        Map<String, Object> settings = new HashMap<>();
+        Map<String, String> profile = Map.of(Constants.DESIGNATION, "Test");
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_CentralDeputation() throws Exception {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.CENTRAL_DEPUTATION);
+        criteria.put(Constants.CRITERIA_VALUE, true);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, List.of(criteria));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, String> profile = new HashMap<>();
+        profile.put(Constants.CENTRAL_DEPUTATION, "true");
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertTrue(result);
+    }
+
+    @Test
+    void testGetExistingContextData_ParseException() throws Exception {
+        Map<String, String> userProfile = new HashMap<>();
+        String badJson = "{invalid";
+        Map<String, Object> row = Map.of(Constants.CONTEXT_DATA_KEY, badJson);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(List.of(row));
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org1", userProfile);
+        assertTrue(userProfile.isEmpty());
+    }
+
+    @Test
+    void testGetExistingContextData_OrgIdNotMatch() throws Exception {
+        Map<String, String> userProfile = new HashMap<>();
+        Map<String, Object> orgProp = new HashMap<>();
+        orgProp.put(Constants.ORGANISATION_ID, "differentOrg");
+        orgProp.put(Constants.CUSTOM_FIELD_VALUES, List.of());
+        String json = new ObjectMapper().writeValueAsString(List.of(orgProp));
+        Map<String, Object> row = Map.of(Constants.CONTEXT_DATA_KEY, json);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(List.of(row));
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org1", userProfile);
+        assertTrue(userProfile.isEmpty());
+    }
+
+    @Test
+    void testGetCBPlanListForUser_UserIdWhitespace() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("   ");
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertNotNull(resp);
+        assertEquals(Constants.SUCCESS, resp.getParams().getStatus()); // returns default with blank userId
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_EmptyCriteriaList() throws Exception {
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_NAME, "grp");
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, Collections.emptyList());
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, String> profile = createUserProfile();
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_UserProfileMissingKey() throws Exception {
+        Map<String, Object> criteria = Map.of(Constants.CRITERIA_KEY, "designation", Constants.CRITERIA_VALUE, List.of("X"));
+        Map<String, Object> userGroup = Map.of(Constants.USER_GROUP_NAME, "grp", Constants.USER_GROUP_CRITERIA_LIST, List.of(criteria));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+
+        Map<String, String> profile = new HashMap<>(); // missing designation
+
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testGetExistingContextData_CustomFieldValuesEmpty() throws Exception {
+        Map<String, Object> orgProp = new HashMap<>();
+        orgProp.put(Constants.ORGANISATION_ID, "org123");
+        orgProp.put(Constants.CUSTOM_FIELD_VALUES, Collections.emptyList());
+        String json = new ObjectMapper().writeValueAsString(List.of(orgProp));
+        Map<String, Object> row = Map.of(Constants.CONTEXT_DATA_KEY, json);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(List.of(row));
+        Map<String, String> userProfile = new HashMap<>();
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org123", userProfile);
+        assertTrue(userProfile.isEmpty());
+    }
+
+    @Test
+    void testGetExistingContextData_MasterListEmptyValues() throws Exception {
+        Map<String, Object> custom = new HashMap<>();
+        custom.put(Constants.TYPE, Constants.MASTER_LIST);
+        custom.put(Constants.VALUES, Collections.emptyList());
+        Map<String, Object> orgProp = new HashMap<>();
+        orgProp.put(Constants.ORGANISATION_ID, "org123");
+        orgProp.put(Constants.CUSTOM_FIELD_VALUES, List.of(custom));
+        String json = new ObjectMapper().writeValueAsString(List.of(orgProp));
+        Map<String, Object> row = Map.of(Constants.CONTEXT_DATA_KEY, json);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(List.of(row));
+        Map<String, String> userProfile = new HashMap<>();
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org123", userProfile);
+        assertTrue(userProfile.isEmpty());
+    }
+
+    @Test
+    void testGetCBPlanListForUser_ActiveCbPlansNull() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user123");
+        Map<String, Object> userData = createUserData();
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.USER), any(), any(), any()))
+                .thenReturn(List.of(userData));
+        when(cbPlanCacheMgr.getCbPlanForAllAndOrgId("org123")).thenReturn(null);
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertEquals(0, resp.getResult().get(Constants.COUNT));
+    }
+
+    @Test
+    void testGetCBPlanListForUser_DuplicateCourseIdSkipped() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user123");
+        Map<String, Object> userData = createUserData();
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.USER), any(), any(), any()))
+                .thenReturn(List.of(userData));
+        Map<String, Object> plan = new HashMap<>();
+        plan.put(Constants.PLAN_ID, "p1");
+        plan.put(Constants.CONTENT_LIST, List.of("c1", "c1")); // duplicate course id
+        when(cbPlanCacheMgr.getCbPlanForAllAndOrgId("org123")).thenReturn(List.of(plan));
+        Map<String, Object> content = new HashMap<>();
+        content.put(Constants.IDENTIFIER, "c1");
+        when(contentService.readContent("c1", null)).thenReturn(content);
+        ApiResponse resp = service.getCBPlanListForUser("org123", "token", false);
+        assertEquals(1, resp.getResult().get(Constants.COUNT));
+    }
+
+    @Test
+    void testRemoveDuplicateCourses_DuplicateIdentifiers() {
+        Map<String, Object> c1 = new HashMap<>();
+        c1.put(Constants.IDENTIFIER, "same");
+        c1.put(Constants.LANGUAGE_MAP_V1, Map.of("en", Map.of(Constants.ID, "same")));
+        Map<String, Object> c2 = new HashMap<>();
+        c2.put(Constants.IDENTIFIER, "same");
+        c2.put(Constants.LANGUAGE_MAP_V1, Map.of());
+        List<Map<String, Object>> list = List.of(c1, c2);
+        List<Map<String, Object>> result = service.removeDuplicateCourses(list);
+        assertEquals(1, result.size()); // second skipped
+    }
+
+    @Test
+    void testRemoveDuplicateCourses_NullLanguageId() {
+        Map<String, Object> c1 = new HashMap<>();
+        c1.put(Constants.IDENTIFIER, "c1");
+        c1.put(Constants.LANGUAGE_MAP_V1, Map.of("en", Map.of()));
+        List<Map<String, Object>> result = service.removeDuplicateCourses(List.of(c1));
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testSetUserProfile_CadreCentralDeputationTrue() throws Exception {
+        Map<String, String> userProfile = new HashMap<>();
+        Map<String, Object> profile = new HashMap<>();
+        profile.put(Constants.ID, "u1");
+        profile.put("rootorgid", "org1");
+        profile.put("profiledetails", Map.of(
+                Constants.CADRE_DETAILS, Map.of(
+                        Constants.CADRE_NAME, "Cadre",
+                        Constants.CIVIL_SERVICE_NAME, "Service",
+                        Constants.CENTRAL_DEPUTATION, true
+                )
+        ));
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("setUserProfile", Map.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, userProfile, profile);
+        assertEquals("true", userProfile.get(Constants.CENTRAL_DEPUTATION));
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_UserGroupsNull() throws Exception {
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, null);
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, Map.of(Constants.DESIGNATION, "Test"));
+        assertFalse(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_CriteriaValueAsString() throws Exception {
+        Map<String, Object> criteria = Map.of(Constants.CRITERIA_KEY, "designation", Constants.CRITERIA_VALUE, "Test");
+        Map<String, Object> userGroup = Map.of(Constants.USER_GROUP_NAME, "grp", Constants.USER_GROUP_CRITERIA_LIST, List.of(criteria));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, String> profile = Map.of("designation", "Test");
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertTrue(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_UserFailsCriteria() throws Exception {
+        Map<String, Object> crit = Map.of(Constants.CRITERIA_KEY, "designation", Constants.CRITERIA_VALUE, List.of("X"));
+        Map<String, Object> userGroup = Map.of(Constants.USER_GROUP_NAME, "g", Constants.USER_GROUP_CRITERIA_LIST, List.of(crit));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, String> profile = Map.of("designation", "Y");
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_PartialCriteriaMatchFails() throws Exception {
+        Map<String, Object> c1 = Map.of(Constants.CRITERIA_KEY, "designation", Constants.CRITERIA_VALUE, List.of("Dev"));
+        Map<String, Object> c2 = Map.of(Constants.CRITERIA_KEY, "group", Constants.CRITERIA_VALUE, List.of("OtherGroup"));
+        Map<String, Object> userGroup = Map.of(Constants.USER_GROUP_NAME, "grp", Constants.USER_GROUP_CRITERIA_LIST, List.of(c1, c2));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(userGroup));
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, String> profile = Map.of("designation", "Dev", "group", "Mismatch");
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testGetExistingContextData_NoRows() throws Exception {
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(Collections.emptyList());
+        Map<String, String> profile = new HashMap<>();
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org1", profile);
+        assertTrue(profile.isEmpty());
+    }
+
+    @Test
+    void testGetExistingContextData_UnsupportedCustomFieldType() throws Exception {
+        Map<String, Object> custom = new HashMap<>();
+        custom.put(Constants.TYPE, "UNKNOWN");
+        custom.put(Constants.ATTRIBUTE_NAME, "attr");
+        custom.put(Constants.VALUE, "val");
+        Map<String, Object> orgProp = new HashMap<>();
+        orgProp.put(Constants.ORGANISATION_ID, "org123");
+        orgProp.put(Constants.CUSTOM_FIELD_VALUES, List.of(custom));
+        String json = new ObjectMapper().writeValueAsString(List.of(orgProp));
+        Map<String, Object> row = Map.of(Constants.CONTEXT_DATA_KEY, json);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(List.of(row));
+        Map<String, String> profile = new HashMap<>();
+        Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org123", profile);
+        assertTrue(profile.isEmpty());
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_AccessControlEmpty() throws Exception {
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, Collections.emptyMap());
+        Map<String, String> profile = Map.of(Constants.DESIGNATION, "Dev");
+        Method m = CbPlanLearnerServiceImpl.class
+                .getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, profile);
+        assertFalse(result);
+    }
+
+    @Test
+    void testEvaluateContextAccessRule_UserGroupsEmptyList() throws Exception {
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, Collections.emptyList());
+        Map<String, Object> settings = Map.of(Constants.ACCESS_CONTROL, accessControl);
+        Method m = CbPlanLearnerServiceImpl.class
+                .getDeclaredMethod("evaluateContextAccessRule", Map.class, Map.class);
+        m.setAccessible(true);
+        boolean result = (boolean) m.invoke(service, settings, new HashMap<>());
+        assertFalse(result);
+    }
+
+    @Test
+    void testGetExistingContextData_RowsNull() throws Exception {
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
+                .thenReturn(null);
+        Map<String, String> profile = new HashMap<>();
+        Method m = CbPlanLearnerServiceImpl.class
+                .getDeclaredMethod("getExistingContextData", String.class, String.class, Map.class);
+        m.setAccessible(true);
+        m.invoke(service, "u1", "org1", profile);
+        assertTrue(profile.isEmpty());
+    }
+
+
 }

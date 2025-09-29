@@ -321,4 +321,105 @@ class ContentStateServiceImplTest {
                 value
         );
     }
+
+    @Test
+    void testReadContentState_progressDetailsInvalidJson() {
+        Map<String,Object> records = new HashMap<>();
+        records.put(Constants.USER_ID_LOWER_CASE,"u1");
+        records.put(Constants.RESOURCE_ID,"c1");
+        records.put(Constants.PROGRESSDETAILS,"{bad-json}");
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(records));
+        Map<String,Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENT_IDS,List.of("c1"));
+        Map<String,Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+        ApiResponse resp = service.readContentState(requestBody,"token");
+        assertEquals(HttpStatus.OK,resp.getResponseCode());
+        assertFalse(((List<?>) resp.getResult().get(Constants.CONTENT_LIST)).isEmpty());
+    }
+
+    @Test
+    void testValidateContentStateUpdatePayload_contentsNotList() {
+        Map<String,Object> req = Map.of(Constants.REQUEST, Map.of(Constants.CONTENTS,"notAList"));
+        String result = ReflectionTestUtils.invokeMethod(service,"validateContentStateUpdatePayload",req);
+        assertNotNull(result);
+        assertTrue(result.contains(Constants.CONTENTS));
+    }
+
+    @Test
+    void testValidateContentStateUpdatePayload_contentsContainsNonMap() {
+        Map<String,Object> req = Map.of(Constants.REQUEST, Map.of(Constants.CONTENTS,List.of("badItem")));
+        String result = ReflectionTestUtils.invokeMethod(service,"validateContentStateUpdatePayload",req);
+        assertNotNull(result);
+        assertTrue(result.contains("contents[0]"));
+    }
+
+    @Test
+    void testProcessContentConsumption_completionPercentageDoubleValid() throws Exception {
+        Map<String,Object> input = new HashMap<>();
+        input.put(Constants.STATUS,1);
+        input.put(Constants.COMPLETION_PERCENTAGE,50.5d);
+        input.put(Constants.CONTENT_ID,"c1");
+        Map<String,Object> result = service.processContentConsumption(input,null,"u1");
+        assertEquals(50.5d,result.get(Constants.COMPLETION_PERCENTAGE));
+    }
+
+    @Test
+    void testProcessContentConsumption_completionPercentageDoubleInvalid() {
+        Map<String,Object> input = new HashMap<>();
+        input.put(Constants.STATUS,1);
+        input.put(Constants.COMPLETION_PERCENTAGE,200.5d);
+        input.put(Constants.CONTENT_ID,"c1");
+        assertThrows(CustomException.class,() -> service.processContentConsumption(input,null,"u1"));
+    }
+
+    @Test
+    void testProcessContentConsumption_existingAccessTimeFromOld() throws Exception {
+        Map<String,Object> input = new HashMap<>();
+        input.put(Constants.STATUS,1);
+        input.put(Constants.COMPLETION_PERCENTAGE,50);
+        input.put(Constants.CONTENT_ID,"c1");
+        Map<String,Object> existing = new HashMap<>();
+        existing.put(Constants.OLD_LAST_ACCESS_TIME,"2024-06-01 09:00:00:000+0000");
+        Map<String,Object> result = service.processContentConsumption(input,existing,"u1");
+        assertNotNull(result.get(Constants.LAST_ACCESS_TIME));
+    }
+
+    @Test
+    void testProcessContentConsumption_existingCompletedTimeFromOld() throws Exception {
+        Map<String,Object> input = new HashMap<>();
+        input.put(Constants.STATUS,2);
+        input.put(Constants.COMPLETION_PERCENTAGE,100);
+        input.put(Constants.CONTENT_ID,"c1");
+        Map<String,Object> existing = new HashMap<>();
+        existing.put(Constants.OLD_LAST_COMPLETED_TIME,"2024-06-01 09:00:00:000+0000");
+        Map<String,Object> result = service.processContentConsumption(input,existing,"u1");
+        assertNotNull(result.get(Constants.LAST_COMPLETED_TIME));
+    }
+
+    @Test
+    void testProcessContentConsumption_inputStatusLowerThanExisting() throws Exception {
+        Map<String,Object> input = new HashMap<>();
+        input.put(Constants.STATUS,1);
+        input.put(Constants.COMPLETION_PERCENTAGE,50);
+        input.put(Constants.CONTENT_ID,"c1");
+        Map<String,Object> existing = new HashMap<>();
+        existing.put(Constants.STATUS,2);
+        existing.put(Constants.COMPLETION_PERCENTAGE,100);
+        Map<String,Object> result = service.processContentConsumption(input,existing,"u1");
+        assertEquals(2,result.get(Constants.STATUS));
+    }
+
+    @Test
+    void testCompareTimeBranches() {
+        Date now = new Date();
+        Date past = new Date(now.getTime()-10000);
+        Date bothNull = ReflectionTestUtils.invokeMethod(service,"compareTime",null,null);
+        assertNotNull(bothNull);
+        Date onlyExisting = ReflectionTestUtils.invokeMethod(service,"compareTime",now,null);
+        assertEquals(now,onlyExisting);
+        Date inputBefore = ReflectionTestUtils.invokeMethod(service,"compareTime",now,past);
+        assertEquals(now,inputBefore);
+    }
 }
