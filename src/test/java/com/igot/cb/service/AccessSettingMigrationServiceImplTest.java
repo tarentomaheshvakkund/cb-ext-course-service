@@ -1,9 +1,6 @@
 package com.igot.cb.service;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -15,6 +12,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.*;
 
 import com.igot.cb.elasticsearch.service.EsUtilService;
@@ -651,6 +649,67 @@ class AccessSettingMigrationServiceImplTest {
 
                 assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
         }
+
+    @Test
+    void testUpdateContextDataWithIdMap_UserGroupsNull() throws Exception {
+        String ctx = "ctx-null";
+        Map<String,Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS,null);
+        Map<String,Object> idMap = new HashMap<>();
+        var method = AccessSettingMigrationServiceImpl.class
+                .getDeclaredMethod("updateContextDataWithIdMap",String.class,Map.class,Map.class);
+        method.setAccessible(true);
+        boolean result = (boolean) method.invoke(migrationService,ctx,accessControl,idMap);
+        assertTrue(result);
+        assertTrue(((List<?>)idMap.get(Constants.USER_GROUPS)).isEmpty());
+    }
+
+    @Test
+    void testParseToInstant_WithOffsetDateTime() throws Exception {
+        String dateStr = "2024-12-31T10:15:30.000+0000";
+        Map<String,Object> map = new HashMap<>();
+        var method = AccessSettingMigrationServiceImpl.class
+                .getDeclaredMethod("parseToInstant",String.class,Map.class);
+        method.setAccessible(true);
+        method.invoke(migrationService,dateStr,map);
+        assertTrue(map.containsKey(Constants.END_DATE_KEY));
+        assertInstanceOf(Instant.class, map.get(Constants.END_DATE_KEY));
+    }
+
+    @Test
+    void testParseToInstant_InvalidString() throws Exception {
+        String bad = "not-a-date";
+        Map<String,Object> map = new HashMap<>();
+        var method = AccessSettingMigrationServiceImpl.class
+                .getDeclaredMethod("parseToInstant",String.class,Map.class);
+        method.setAccessible(true);
+        method.invoke(migrationService,bad,map);
+        assertFalse(map.containsKey(Constants.END_DATE_KEY));
+    }
+
+    @Test
+    void testBuildContextData_UnknownAssignmentType() throws Exception {
+        var method = AccessSettingMigrationServiceImpl.class
+                .getDeclaredMethod("buildContextData",String.class,String.class,String.class,List.class);
+        method.setAccessible(true);
+        String json = (String) method.invoke(migrationService,"planX","org1","WeirdType",List.of("x","y"));
+        assertTrue(json.contains(Constants.ROOT_ORG_ID));
+        assertTrue(json.contains("org1"));
+        assertFalse(json.contains("WeirdType"));
+    }
+
+    @Test
+    void testInsertPlanToLookUpTable_RetiredPlan() throws Exception {
+        ApiResponse resp = new ApiResponse();
+        resp.put(Constants.RESPONSE,Constants.SUCCESS);
+        when(cassandraOperation.insertRecord(anyString(),anyString(),anyMap())).thenReturn(resp);
+        var method = AccessSettingMigrationServiceImpl.class
+                .getDeclaredMethod("insertPlanToLookUpTable",String.class,String.class,Instant.class,String.class);
+        method.setAccessible(true);
+        method.invoke(migrationService,"plan1","org1",Instant.now(),Constants.CB_RETIRE);
+        verify(cassandraOperation).insertRecord(eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_CB_PLAN_V2_LOOKUP_BY_ORG), anyMap());
+    }
 
 
 

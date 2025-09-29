@@ -245,4 +245,81 @@ class OutboundRequestHandlerServiceImplTest {
             logger.setLevel(originalLevel);
         }
     }
+
+    @Test
+    void testFetchResultUsingPatch_Success_NoHeaders() {
+        String uri = "http://test.com/patch";
+        Map<String,Object> mockResp = Map.of("ok","yes");
+        when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(mockResp);
+        Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of("req","v"), null);
+        assertEquals("yes", result.get("ok"));
+    }
+
+    @Test
+    void testFetchResultUsingPatch_Success_WithHeaders() {
+        String uri = "http://test.com/patch";
+        Map<String,Object> mockResp = Map.of("ok","yes");
+        Map<String,String> headers = Map.of("Authorization","Bearer token");
+        when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(mockResp);
+        Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of("r",1), headers);
+        assertEquals("yes", result.get("ok"));
+    }
+
+    @Test
+    void testFetchResultUsingPatch_HttpError_ValidJson() throws Exception {
+        String uri = "http://test.com/patch";
+        Map<String,Object> errorMap = Map.of("error","bad");
+        String json = new ObjectMapper().writeValueAsString(errorMap);
+        HttpClientErrorException ex = HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,"Bad", new HttpHeaders(),
+                json.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(ex);
+        Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of(), null);
+        assertEquals("bad", result.get("error"));
+    }
+
+    @Test
+    void testFetchResultUsingPatch_HttpError_InvalidJson() {
+        String uri = "http://test.com/patch";
+        String invalidJson = "<html>";
+        HttpClientErrorException ex = HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,"Bad", new HttpHeaders(),
+                invalidJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(ex);
+        Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of(), null);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchResultUsingPatch_NullResponse() {
+        String uri = "http://test.com/patch";
+        when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(null);
+        Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of(), null);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchResultUsingPatch_WithDebugEnabled() {
+        String uri = "http://test.com/patch";
+        Map<String,Object> mockResp = Map.of("ok","yes");
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level original = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            when(restTemplate.patchForObject(eq(uri), any(HttpEntity.class), eq(Map.class)))
+                    .thenReturn(mockResp);
+            Map<String,Object> result = outboundService.fetchResultUsingPatch(uri, Map.of("r",1), null);
+            assertEquals("yes", result.get("ok"));
+        } finally {
+            logger.setLevel(original);
+        }
+    }
+
+
 }
