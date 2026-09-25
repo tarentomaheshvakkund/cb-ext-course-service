@@ -103,4 +103,14 @@ public class CbPlanReadResponseDto {
      * V4-specific field for linking CB Plan to Competency Assessment.
      */
     private String caLinkedId;
+
+    /**
+     * Organization ID of the plan creator.
+     */
+    private String createdByOrgId;
+
+    /**
+     * Organization name of the plan creator.
+     */
+    private String createdByOrgName;
 }

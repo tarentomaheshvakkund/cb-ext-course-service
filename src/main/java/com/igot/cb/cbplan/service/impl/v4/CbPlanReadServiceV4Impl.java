@@ -145,6 +145,7 @@ public class CbPlanReadServiceV4Impl {
                 .contextData(parseContextDataToJsonNode(cbPlan.get(Constants.CONTEXT_DATA_REQUEST)))
                 .contentList(fields.contentList())
                 .caLinkedId((String) cbPlan.get(Constants.CA_LINKED_ID_DB))
+                .createdByOrgId(extractCreatorOrgId(cbPlan))
                 .build();
     }
 
@@ -251,5 +252,14 @@ public class CbPlanReadServiceV4Impl {
             }
         }
         return identifiers;
+    }
+
+    private String extractCreatorOrgId(Map<String, Object> cbPlan) {
+        Object orgIdListObj = cbPlan.get(Constants.ORG_ID_LIST);
+        if (orgIdListObj instanceof List<?> rawList && !rawList.isEmpty()) {
+            Object first = rawList.get(0);
+            return Objects.nonNull(first) ? first.toString() : null;
+        }
+        return null;
     }
 }
